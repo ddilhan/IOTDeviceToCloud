@@ -17,6 +17,7 @@ namespace DeviceToCloud
         private static readonly TransportType s_transportType = TransportType.Mqtt;
         private static int _estimatedDuration;
         private static int _telemetryInterval;
+        private static bool _isExecutionPaused;
 
         async static Task Main(string[] args)
         {
@@ -30,13 +31,18 @@ namespace DeviceToCloud
 
             _connectionString = _config.GetSection("IOTHubConnectionString").Value;
             _estimatedDuration = Convert.ToInt32(_config.GetSection("ExecutionDurationInSeconds").Value);
-            _telemetryInterval = Convert.ToInt32(_config.GetSection("ExecutionIntervalInSeconds").Value);
+            _telemetryInterval = Convert.ToInt32(_config.GetSection("ExecutionIntervalInMiliseconds").Value);
+            _isExecutionPaused = Convert.ToBoolean(_config.GetSection("IsExecutionPaused").Value);
 
             //This sample accepts the device connection string as a parameter, if present
             ValidateConnectionString(_connectionString);
 
             // Connect to the IoT hub using the MQTT protocol
             _deviceClient = DeviceClient.CreateFromConnectionString(_connectionString, s_transportType);
+
+            // Create a handler for the direct method call
+            await _deviceClient.SetMethodHandlerAsync("SetTelemetryInterval", SetTelemetryInterval, null);
+            await _deviceClient.SetMethodHandlerAsync("setExecutionStatus", setExecutionStatus, null);
 
             // Run the telemetry loop
             await SendDeviceToCloudMessagesAsync();
@@ -80,31 +86,41 @@ namespace DeviceToCloud
 
             while (_estimatedDuration != currentDuration) 
             {
-                double currentTemperature = minTemperature + rand.NextDouble() * 15;
-                double currentHumidity = minHumidity + rand.NextDouble() * 20;
-
-                // Create JSON message
-                string messageBody = JsonSerializer.Serialize(
-                    new
-                    {
-                        temperature = currentTemperature,
-                        humidity = currentHumidity,
-                    });
-                using var message = new Message(Encoding.ASCII.GetBytes(messageBody))
+                if (_isExecutionPaused != true)
                 {
-                    ContentType = "application/json",
-                    ContentEncoding = "utf-8",
-                };
+                    double currentTemperature = minTemperature + rand.NextDouble() * 15;
+                    double currentHumidity = minHumidity + rand.NextDouble() * 20;
 
-                // Add a custom application property to the message.
-                // An IoT hub can filter on these properties without access to the message body.
-                message.Properties.Add("temperatureAlert", (currentTemperature > 30) ? "true" : "false");
+                    // Create JSON message
+                    string messageBody = JsonSerializer.Serialize(
+                        new
+                        {
+                            temperature = currentTemperature,
+                            humidity = currentHumidity,
+                        });
+                    using var message = new Message(Encoding.ASCII.GetBytes(messageBody))
+                    {
+                        ContentType = "application/json",
+                        ContentEncoding = "utf-8",
+                    };
 
-                // Send the telemetry message
-                await _deviceClient.SendEventAsync(message);
+                    // Add a custom application property to the message.
+                    // An IoT hub can filter on these properties without access to the message body.
+                    message.Properties.Add("temperatureAlert", (currentTemperature > 30) ? "true" : "false");
 
-                Console.WriteLine($"Iteration: {currentDuration/1000}");
-                Console.WriteLine($"{DateTime.Now} > Sending message: {messageBody}");
+                    // Send the telemetry message
+                    await _deviceClient.SendEventAsync(message);
+
+                    Console.WriteLine($"Iteration: {currentDuration / 1000}");
+                    Console.WriteLine($"{DateTime.Now} > Sending message: {messageBody}");
+                }
+                else
+                {
+
+                    Console.WriteLine($"Iteration: {currentDuration / 1000}");
+                    Console.WriteLine($"{DateTime.Now} > Waiting for start execution!");
+                }
+                
                 currentDuration += 1000;
                 try
                 {
@@ -115,6 +131,59 @@ namespace DeviceToCloud
                     // User canceled
                     return;
                 }
+            }
+        }
+
+        // Handle the direct method call
+        private static Task<MethodResponse> SetTelemetryInterval(MethodRequest methodRequest, object userContext)
+        {
+            Console.WriteLine(methodRequest);
+            var data = Encoding.UTF8.GetString(methodRequest.Data);
+            Console.WriteLine(data);
+            // Check the payload is a single integer value
+            if (int.TryParse(data, out int telemetryIntervalInSeconds))
+            {
+                _telemetryInterval = telemetryIntervalInSeconds;
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"Telemetry interval set to {_telemetryInterval}");
+                Console.ResetColor();
+
+                // Acknowlege the direct method call with a 200 success message
+                string result = $"{{\"result\":\"Executed direct method: {methodRequest.Name}\"}}";
+                return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
+            }
+            else
+            {
+                // Acknowlege the direct method call with a 400 error message
+                string result = "{\"result\":\"Invalid parameter\"}";
+                return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 400));
+            }
+        }
+
+        private static Task<MethodResponse> setExecutionStatus(MethodRequest methodRequest, object userContext) 
+        {
+            Console.WriteLine(methodRequest);
+            var data = Encoding.UTF8.GetString(methodRequest.Data);
+            Console.WriteLine(data);
+            // Check the payload is a single integer value
+            if (bool.TryParse(data, out bool executionStatus))
+            {
+                _isExecutionPaused = executionStatus;
+
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine($"Execution status set to {_isExecutionPaused}");
+                Console.ResetColor();
+
+                // Acknowlege the direct method call with a 200 success message
+                string result = $"{{\"result\":\"Executed direct method: {methodRequest.Name}\"}}";
+                return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 200));
+            }
+            else
+            {
+                // Acknowlege the direct method call with a 400 error message
+                string result = "{\"result\":\"Invalid parameter\"}";
+                return Task.FromResult(new MethodResponse(Encoding.UTF8.GetBytes(result), 400));
             }
         }
     }

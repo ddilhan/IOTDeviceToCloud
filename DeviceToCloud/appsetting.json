@@ -8,6 +8,7 @@
     "**/platforms"
   ],
   "IOTHubConnectionString": "HostName=devicecontrolhub.azure-devices.net;DeviceId=device-one;SharedAccessKey=2B1s3lwOmUCfH3shZulIhK7KBfN4qaNKbJdPJI0Npb4=",
-  "ExecutionDurationInSeconds": "20000",
-  "ExecutionIntervalInSeconds": "1000"
+  "ExecutionDurationInSeconds": "60000",
+  "ExecutionIntervalInMiliseconds": "1000",
+  "IsExecutionPaused": false
 }
